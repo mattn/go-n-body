@@ -114,86 +114,87 @@ func advance(steps int, dt float64) {
 	rm3 := archsimd.BroadcastFloat64x4(mass[3])
 	rm4 := archsimd.BroadcastFloat64x4(mass[4])
 
-	for s := 0; s < steps; s++ {
-		// Pair deltas: (1,0),(2,0),(2,1),(3,0),(3,1),(3,2),(4,0),(4,1),(4,2),(4,3)
-		r0 := pos[1].Sub(pos[0])
-		r1 := pos[2].Sub(pos[0])
-		r2 := pos[2].Sub(pos[1])
-		r3 := pos[3].Sub(pos[0])
+	// Load into locals to avoid global array access in hot loop
+	p0, p1, p2, p3, p4 := pos[0], pos[1], pos[2], pos[3], pos[4]
+	v0, v1, v2, v3, v4 := vel[0], vel[1], vel[2], vel[3], vel[4]
 
-		// Batch 0-3: compute mag
+	for s := 0; s < steps; s++ {
+		// Batch 0-3: pairs (1,0),(2,0),(2,1),(3,0)
+		r0 := p1.Sub(p0)
+		r1 := p2.Sub(p0)
+		r2 := p2.Sub(p1)
+		r3 := p3.Sub(p0)
 		mag03 := rsqrtBatch(r0, r1, r2, r3, c0375, c125, c1875, dtv)
 		var m03 [4]float64
 		mag03.Store(&m03)
 
-		r4 := pos[3].Sub(pos[1])
-		r5 := pos[3].Sub(pos[2])
-		r6 := pos[4].Sub(pos[0])
-		r7 := pos[4].Sub(pos[1])
+		// Apply batch 0-3 velocity updates immediately to free r0-r3
+		t := r0.Mul(archsimd.BroadcastFloat64x4(m03[0]))
+		v1 = v1.Sub(t.Mul(rm0))
+		v0 = v0.Add(t.Mul(rm1))
 
-		// Batch 4-7
-		mag47 := rsqrtBatch(r4, r5, r6, r7, c0375, c125, c1875, dtv)
+		t = r1.Mul(archsimd.BroadcastFloat64x4(m03[1]))
+		v2 = v2.Sub(t.Mul(rm0))
+		v0 = v0.Add(t.Mul(rm2))
+
+		t = r2.Mul(archsimd.BroadcastFloat64x4(m03[2]))
+		v2 = v2.Sub(t.Mul(rm1))
+		v1 = v1.Add(t.Mul(rm2))
+
+		t = r3.Mul(archsimd.BroadcastFloat64x4(m03[3]))
+		v3 = v3.Sub(t.Mul(rm0))
+		v0 = v0.Add(t.Mul(rm3))
+
+		// Batch 4-7: pairs (3,1),(3,2),(4,0),(4,1)
+		r0 = p3.Sub(p1)
+		r1 = p3.Sub(p2)
+		r2 = p4.Sub(p0)
+		r3 = p4.Sub(p1)
+		mag47 := rsqrtBatch(r0, r1, r2, r3, c0375, c125, c1875, dtv)
 		var m47 [4]float64
 		mag47.Store(&m47)
 
-		r8 := pos[4].Sub(pos[2])
-		r9 := pos[4].Sub(pos[3])
+		t = r0.Mul(archsimd.BroadcastFloat64x4(m47[0]))
+		v3 = v3.Sub(t.Mul(rm1))
+		v1 = v1.Add(t.Mul(rm3))
 
-		// Batch 8-9 (padded)
-		mag89 := rsqrtBatch(r8, r9, one, one, c0375, c125, c1875, dtv)
+		t = r1.Mul(archsimd.BroadcastFloat64x4(m47[1]))
+		v3 = v3.Sub(t.Mul(rm2))
+		v2 = v2.Add(t.Mul(rm3))
+
+		t = r2.Mul(archsimd.BroadcastFloat64x4(m47[2]))
+		v4 = v4.Sub(t.Mul(rm0))
+		v0 = v0.Add(t.Mul(rm4))
+
+		t = r3.Mul(archsimd.BroadcastFloat64x4(m47[3]))
+		v4 = v4.Sub(t.Mul(rm1))
+		v1 = v1.Add(t.Mul(rm4))
+
+		// Batch 8-9: pairs (4,2),(4,3) + padding
+		r0 = p4.Sub(p2)
+		r1 = p4.Sub(p3)
+		mag89 := rsqrtBatch(r0, r1, one, one, c0375, c125, c1875, dtv)
 		var m89 [4]float64
 		mag89.Store(&m89)
 
-		// Velocity updates - fully unrolled
-		var t archsimd.Float64x4
+		t = r0.Mul(archsimd.BroadcastFloat64x4(m89[0]))
+		v4 = v4.Sub(t.Mul(rm2))
+		v2 = v2.Add(t.Mul(rm4))
 
-		t = r0.Mul(archsimd.BroadcastFloat64x4(m03[0]))
-		vel[1] = vel[1].Sub(t.Mul(rm0))
-		vel[0] = vel[0].Add(t.Mul(rm1))
-
-		t = r1.Mul(archsimd.BroadcastFloat64x4(m03[1]))
-		vel[2] = vel[2].Sub(t.Mul(rm0))
-		vel[0] = vel[0].Add(t.Mul(rm2))
-
-		t = r2.Mul(archsimd.BroadcastFloat64x4(m03[2]))
-		vel[2] = vel[2].Sub(t.Mul(rm1))
-		vel[1] = vel[1].Add(t.Mul(rm2))
-
-		t = r3.Mul(archsimd.BroadcastFloat64x4(m03[3]))
-		vel[3] = vel[3].Sub(t.Mul(rm0))
-		vel[0] = vel[0].Add(t.Mul(rm3))
-
-		t = r4.Mul(archsimd.BroadcastFloat64x4(m47[0]))
-		vel[3] = vel[3].Sub(t.Mul(rm1))
-		vel[1] = vel[1].Add(t.Mul(rm3))
-
-		t = r5.Mul(archsimd.BroadcastFloat64x4(m47[1]))
-		vel[3] = vel[3].Sub(t.Mul(rm2))
-		vel[2] = vel[2].Add(t.Mul(rm3))
-
-		t = r6.Mul(archsimd.BroadcastFloat64x4(m47[2]))
-		vel[4] = vel[4].Sub(t.Mul(rm0))
-		vel[0] = vel[0].Add(t.Mul(rm4))
-
-		t = r7.Mul(archsimd.BroadcastFloat64x4(m47[3]))
-		vel[4] = vel[4].Sub(t.Mul(rm1))
-		vel[1] = vel[1].Add(t.Mul(rm4))
-
-		t = r8.Mul(archsimd.BroadcastFloat64x4(m89[0]))
-		vel[4] = vel[4].Sub(t.Mul(rm2))
-		vel[2] = vel[2].Add(t.Mul(rm4))
-
-		t = r9.Mul(archsimd.BroadcastFloat64x4(m89[1]))
-		vel[4] = vel[4].Sub(t.Mul(rm3))
-		vel[3] = vel[3].Add(t.Mul(rm4))
+		t = r1.Mul(archsimd.BroadcastFloat64x4(m89[1]))
+		v4 = v4.Sub(t.Mul(rm3))
+		v3 = v3.Add(t.Mul(rm4))
 
 		// Update positions
-		pos[0] = pos[0].Add(vel[0].Mul(dtv))
-		pos[1] = pos[1].Add(vel[1].Mul(dtv))
-		pos[2] = pos[2].Add(vel[2].Mul(dtv))
-		pos[3] = pos[3].Add(vel[3].Mul(dtv))
-		pos[4] = pos[4].Add(vel[4].Mul(dtv))
+		p0 = p0.Add(v0.Mul(dtv))
+		p1 = p1.Add(v1.Mul(dtv))
+		p2 = p2.Add(v2.Mul(dtv))
+		p3 = p3.Add(v3.Mul(dtv))
+		p4 = p4.Add(v4.Mul(dtv))
 	}
+
+	pos[0], pos[1], pos[2], pos[3], pos[4] = p0, p1, p2, p3, p4
+	vel[0], vel[1], vel[2], vel[3], vel[4] = v0, v1, v2, v3, v4
 }
 
 func main() {
