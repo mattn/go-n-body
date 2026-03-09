@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"simd/archsimd"
 	"strconv"
 )
@@ -198,6 +199,7 @@ func advance(steps int, dt float64) {
 }
 
 func main() {
+	debug.SetGCPercent(-1)
 	flag.Parse()
 	if flag.NArg() > 0 {
 		n, _ = strconv.Atoi(flag.Arg(0))
